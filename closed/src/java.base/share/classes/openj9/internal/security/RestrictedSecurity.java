@@ -589,6 +589,7 @@ public final class RestrictedSecurity {
         propsMapping.put("jdk.tls.legacyAlgorithms", restricts.jdkTlsLegacyAlgorithms);
         propsMapping.put("jdk.certpath.disabledAlgorithms", restricts.jdkCertpathDisabledAlgorithms);
         propsMapping.put("jdk.security.legacyAlgorithms", restricts.jdkSecurityLegacyAlgorithms);
+        propsMapping.put("securerandom.strongAlgorithms", restricts.jdkSecureRandomStrongAlgorithms);
 
         if (restricts.descIsFIPS) {
             if (restricts.jdkFipsMode == null) {
@@ -677,6 +678,11 @@ public final class RestrictedSecurity {
             printStackTraceAndExit("Restricted security mode secure random is missing.");
         }
 
+        // Check secure random strong algorithms format (if defined).
+        if (!isNullOrBlank(restricts.jdkSecureRandomStrongAlgorithms)) {
+            validateStrongAlgorithmsFormat(restricts.jdkSecureRandomStrongAlgorithms);
+        }
+
         // If user enabled FIPS, check whether chosen profile is applicable.
         if (userEnabledFIPS) {
             checkFIPSCompatibility();
@@ -757,6 +763,42 @@ public final class RestrictedSecurity {
     }
 
     /**
+     * Validates the format of the securerandom.strongAlgorithms property.
+     *
+     * @param strongAlgorithms the property value
+     */
+    private static void validateStrongAlgorithmsFormat(String strongAlgorithms) {
+        if ((strongAlgorithms == null) || strongAlgorithms.isBlank()) {
+            printStackTraceAndExit("Invalid securerandom.strongAlgorithms");
+        }
+
+        // format → exactly one colon only
+        Pattern pattern = Pattern.compile("^([^:]*):([^:]*)$");
+
+        for (String entry : strongAlgorithms.split(",")) {
+            Matcher matcher = pattern.matcher(entry.trim());
+
+            if (!matcher.matches()) {
+                printStackTraceAndExit("Invalid securerandom.strongAlgorithms format, expected: Algorithm:Provider");
+            }
+
+            String algorithm = matcher.group(1).trim();
+            String provider = matcher.group(2).trim();
+
+            if (algorithm.isEmpty()) {
+                printStackTraceAndExit("Algorithm missing in entry: '" + entry + "'");
+            }
+            if (provider.isEmpty()) {
+                printStackTraceAndExit("Provider missing in entry: '" + entry + "'");
+            }
+            if (!restricts.providers.stream()
+                    .anyMatch(p -> p.equals(provider) || p.endsWith("." + provider))) {
+                printStackTraceAndExit("Provider '" + provider + "' not present in configured providers");
+            }
+        }
+    }
+
+    /**
      * This class is used to save and operate on restricted security
      * properties which are loaded from the java.security file.
      */
@@ -783,6 +825,7 @@ public final class RestrictedSecurity {
         // For SecureRandom.
         final String jdkSecureRandomProvider;
         final String jdkSecureRandomAlgorithm;
+        private final String jdkSecureRandomStrongAlgorithms;
 
         final String jdkFipsMode;
 
@@ -817,6 +860,7 @@ public final class RestrictedSecurity {
             // For SecureRandom.
             this.jdkSecureRandomProvider = parser.getProperty("jdkSecureRandomProvider");
             this.jdkSecureRandomAlgorithm = parser.getProperty("jdkSecureRandomAlgorithm");
+            this.jdkSecureRandomStrongAlgorithms = parser.getProperty("jdkSecureRandomStrongAlgorithms");
 
             this.jdkFipsMode = parser.getProperty("jdkFipsMode");
 
@@ -1111,6 +1155,7 @@ public final class RestrictedSecurity {
             printProperty(profileID + ".javax.net.ssl.keyStore: ", keyStore);
             printProperty(profileID + ".securerandom.provider: ", jdkSecureRandomProvider);
             printProperty(profileID + ".securerandom.algorithm: ", jdkSecureRandomAlgorithm);
+            printProperty(profileID + ".securerandom.strongAlgorithms: ", jdkSecureRandomStrongAlgorithms);
             System.out.println();
         }
 
@@ -1514,6 +1559,9 @@ public final class RestrictedSecurity {
                 case "jdkTlsLegacyAlgorithms":
                     propertyKey = "jdk.tls.legacyAlgorithms";
                     break;
+                case "jdkSecureRandomStrongAlgorithms":
+                    propertyKey = "securerandom.strongAlgorithms";
+                    break;
                 default:
                     return null;
                 }
@@ -1567,6 +1615,8 @@ public final class RestrictedSecurity {
                     profileID + ".securerandom.provider", allInfo);
             setProperty("jdkSecureRandomAlgorithm",
                     profileID + ".securerandom.algorithm", allInfo);
+            setProperty("jdkSecureRandomStrongAlgorithms",
+                    profileID + ".securerandom.strongAlgorithms", allInfo);
             setProperty("jdkFipsMode",
                     profileID + ".fips.mode", allInfo);
 
@@ -1912,6 +1962,7 @@ public final class RestrictedSecurity {
             case "jdkTlsDisabledAlgorithms":
             case "jdkTlsDisabledNamedCurves":
             case "jdkTlsLegacyAlgorithms":
+            case "jdkSecureRandomStrongAlgorithms":
                 return true;
             default:
                 return false;
