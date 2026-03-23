@@ -202,6 +202,27 @@ public class TestProperties {
         return tests.build();
     }
 
+    // This profile in property-java.security file which extends profile in the main java.security file, 
+    // and it is expected to load successfully and have the correct value for securerandom.strongAlgorithms property. 
+    private static Stream<Arguments> patternMatches_strongAlgorithms_expectedExitValue0() {
+            Stream.Builder<Arguments> tests = Stream.builder();
+
+            if (isProviderPresent("OpenJCEPlusFIPS")) {
+                    // Test 1 - Validate that profile with securerandom.strongAlgorithms loads
+                    // successfully
+                    tests.add(Arguments.of("Test-Profile-StrongAlgorithms.Extension",
+                                    System.getProperty("test.src") + "/property-java.security",
+                                    "(?s)(?=.*OpenJCEPlusFIPS)(?=.*SUN)(?=.*SunJSSE)"));
+
+                    // Test 2 - Validate securerandom.strongAlgorithms property value is loaded and correct
+                    tests.add(Arguments.of("Test-Profile-StrongAlgorithms.Extension",
+                                    System.getProperty("test.src") + "/property-java.security",
+                                    "securerandom\\.strongAlgorithms: SHA512DRBG:OpenJCEPlusFIPS"));
+            }
+
+            return tests.build();
+    }
+
     @ParameterizedTest
     @MethodSource("patternMatches_expectedExitValue0")
     public void shouldContain_expectedExitValue0(String customprofile, String securityPropertyFile, String expected) throws Exception {
@@ -241,6 +262,19 @@ public class TestProperties {
         outputAnalyzer.shouldHaveExitValue(exitValue).shouldMatch(expected);
     }
 
+    @ParameterizedTest
+    @MethodSource("patternMatches_strongAlgorithms_expectedExitValue0")
+    public void shouldContain_strongAlgorithms(String customprofile, String securityPropertyFile,
+                    String expected) throws Exception {
+            OutputAnalyzer outputAnalyzer = ProcessTools.executeTestJava(
+                            "-Dsemeru.fips=true",
+                            "-Dsemeru.customprofile=" + customprofile,
+                            "-Djava.security.properties=" + securityPropertyFile,
+                            "TestProperties");
+            outputAnalyzer.reportDiagnosticSummary();
+            outputAnalyzer.shouldHaveExitValue(0).shouldMatch(expected);
+    }
+
     private static boolean isProviderPresent(String providerName) {
         for (Provider provider : Security.getProviders()) {
             if (provider.getName().equalsIgnoreCase(providerName)) {
@@ -257,6 +291,14 @@ public class TestProperties {
                 System.out.println("Provider Name: " + provider.getName());
                 System.out.println("Provider Version: " + provider.getVersionStr());
             }
+            if (isProviderPresent("OpenJCEPlusFIPS")) {
+                    // Print securerandom.strongAlgorithms property if present
+                    String strongAlgorithms = Security.getProperty("securerandom.strongAlgorithms");
+                    if (strongAlgorithms != null && !strongAlgorithms.isEmpty()) {
+                            System.out.println("securerandom.strongAlgorithms: " + strongAlgorithms);
+                    }
+            }
+
         } catch (Exception e) {
             System.out.println(e);
         }

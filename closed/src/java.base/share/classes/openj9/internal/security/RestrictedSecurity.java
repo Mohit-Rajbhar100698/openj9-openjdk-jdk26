@@ -531,6 +531,11 @@ public final class RestrictedSecurity {
                 // Add restricted security providers.
                 setProviders(props);
 
+                // Validate algorithms are available in providers.
+                if (!isNullOrBlank(restricts.jdkSecureRandomStrongAlgorithms)) {
+                    validateStrongAlgorithmsAvailability(restricts.jdkSecureRandomStrongAlgorithms);
+                }
+
                 // Add restricted security Properties.
                 setProperties(props);
 
@@ -589,6 +594,7 @@ public final class RestrictedSecurity {
         propsMapping.put("jdk.tls.legacyAlgorithms", restricts.jdkTlsLegacyAlgorithms);
         propsMapping.put("jdk.certpath.disabledAlgorithms", restricts.jdkCertpathDisabledAlgorithms);
         propsMapping.put("jdk.security.legacyAlgorithms", restricts.jdkSecurityLegacyAlgorithms);
+        propsMapping.put("securerandom.strongAlgorithms", restricts.jdkSecureRandomStrongAlgorithms);
 
         if (restricts.descIsFIPS) {
             if (restricts.jdkFipsMode == null) {
@@ -677,6 +683,11 @@ public final class RestrictedSecurity {
             printStackTraceAndExit("Restricted security mode secure random is missing.");
         }
 
+        // Check secure random strong algorithms format (if defined).
+        if (!isNullOrBlank(restricts.jdkSecureRandomStrongAlgorithms)) {
+            validateStrongAlgorithmsFormat(restricts.jdkSecureRandomStrongAlgorithms);
+        }
+
         // If user enabled FIPS, check whether chosen profile is applicable.
         if (userEnabledFIPS) {
             checkFIPSCompatibility();
@@ -757,6 +768,95 @@ public final class RestrictedSecurity {
     }
 
     /**
+     * Validate securerandom.strongAlgorithms property format.
+     * 
+     * @param strongAlgorithms the value of securerandom.strongAlgorithms property
+     */
+    private static void validateStrongAlgorithmsFormat(String strongAlgorithms) {
+        String[] entries = strongAlgorithms.split(",");
+        int validCount = 0;
+
+        for (int i = 0; i < entries.length; i++) {
+            String entry = entries[i].trim();
+
+            if (entry.isEmpty()) {
+                continue;
+            }
+
+            String[] parts = entry.split(":", 2);
+            String algorithm = parts[0].trim();
+
+            if (algorithm.isEmpty()) {
+                printStackTraceAndExit("Invalid securerandom.strongAlgorithms: "
+                        + "algorithm cannot be empty in entry '" + entry + "'");
+            }
+
+            if (parts.length == 2) {
+                String provider = parts[1].trim();
+
+                if (provider.isEmpty()) {
+                    printStackTraceAndExit("Invalid securerandom.strongAlgorithms: "
+                            + "provider cannot be empty in entry '" + entry + "'");
+                }
+
+                boolean found = false;
+                for (String profileProvider : restricts.providers) {
+                    if (profileProvider.contains(provider)) {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    printStackTraceAndExit("Provider '" + provider
+                            + "' in securerandom.strongAlgorithms is not in the profile's provider list");
+                }
+            }
+
+            validCount++;
+        }
+
+        if (validCount == 0) {
+            printStackTraceAndExit("securerandom.strongAlgorithms must contain at least one valid entry");
+        }
+    }
+
+    /**
+     * Validate that algorithms in securerandom.strongAlgorithms are available in
+     * providers.
+     * Must be called AFTER providers are loaded.
+     * 
+     * @param strongAlgorithms the value of securerandom.strongAlgorithms property
+     */
+    private static void validateStrongAlgorithmsAvailability(String strongAlgorithms) {
+        String[] entries = strongAlgorithms.split(",");
+
+        for (int i = 0; i < entries.length; i++) {
+            String entry = entries[i].trim();
+
+            if (entry.isEmpty()) {
+                continue;
+            }
+
+            String[] parts = entry.split(":", 2);
+            String algorithm = parts[0].trim();
+
+            if (parts.length == 2) {
+                String provider = parts[1].trim();
+
+                try {
+                    java.security.SecureRandom.getInstance(algorithm, provider);
+                } catch (java.security.NoSuchAlgorithmException e) {
+                    printStackTraceAndExit("Algorithm '" + algorithm
+                            + "' is not available in provider '" + provider + "'" + e.getMessage());
+                } catch (java.security.NoSuchProviderException e) {
+                    printStackTraceAndExit("Provider '" + provider + "' is not available" + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
      * This class is used to save and operate on restricted security
      * properties which are loaded from the java.security file.
      */
@@ -783,6 +883,7 @@ public final class RestrictedSecurity {
         // For SecureRandom.
         final String jdkSecureRandomProvider;
         final String jdkSecureRandomAlgorithm;
+        private final String jdkSecureRandomStrongAlgorithms;
 
         final String jdkFipsMode;
 
@@ -817,6 +918,7 @@ public final class RestrictedSecurity {
             // For SecureRandom.
             this.jdkSecureRandomProvider = parser.getProperty("jdkSecureRandomProvider");
             this.jdkSecureRandomAlgorithm = parser.getProperty("jdkSecureRandomAlgorithm");
+            this.jdkSecureRandomStrongAlgorithms = parser.getProperty("jdkSecureRandomStrongAlgorithms");
 
             this.jdkFipsMode = parser.getProperty("jdkFipsMode");
 
@@ -1111,6 +1213,7 @@ public final class RestrictedSecurity {
             printProperty(profileID + ".javax.net.ssl.keyStore: ", keyStore);
             printProperty(profileID + ".securerandom.provider: ", jdkSecureRandomProvider);
             printProperty(profileID + ".securerandom.algorithm: ", jdkSecureRandomAlgorithm);
+            printProperty(profileID + ".securerandom.strongAlgorithms: ", jdkSecureRandomStrongAlgorithms);
             System.out.println();
         }
 
@@ -1514,6 +1617,9 @@ public final class RestrictedSecurity {
                 case "jdkTlsLegacyAlgorithms":
                     propertyKey = "jdk.tls.legacyAlgorithms";
                     break;
+                case "jdkSecureRandomStrongAlgorithms":
+                    propertyKey = "securerandom.strongAlgorithms";
+                    break;
                 default:
                     return null;
                 }
@@ -1567,6 +1673,8 @@ public final class RestrictedSecurity {
                     profileID + ".securerandom.provider", allInfo);
             setProperty("jdkSecureRandomAlgorithm",
                     profileID + ".securerandom.algorithm", allInfo);
+            setProperty("jdkSecureRandomStrongAlgorithms",
+                    profileID + ".securerandom.strongAlgorithms", allInfo);
             setProperty("jdkFipsMode",
                     profileID + ".fips.mode", allInfo);
 
@@ -1912,6 +2020,7 @@ public final class RestrictedSecurity {
             case "jdkTlsDisabledAlgorithms":
             case "jdkTlsDisabledNamedCurves":
             case "jdkTlsLegacyAlgorithms":
+            case "jdkSecureRandomStrongAlgorithms":
                 return true;
             default:
                 return false;
