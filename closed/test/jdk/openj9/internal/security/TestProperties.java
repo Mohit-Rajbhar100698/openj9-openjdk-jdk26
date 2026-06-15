@@ -205,7 +205,6 @@ public class TestProperties {
     private static Stream<Arguments> patternMatches_strongAlgorithms() {
         Stream.Builder<Arguments> tests = Stream.builder();
 
-        if (isProviderPresent("OpenJCEPlusFIPS")) {
             // 1 - Test property - base profile with securerandom.strongAlgorithms loads successfully.
             tests.add(Arguments.of("Test-Profile-strongAlgorithms",
                     System.getProperty("test.src") + "/property-java.security",
@@ -262,7 +261,6 @@ public class TestProperties {
                     "The property names: RestrictedSecurity.Test-Profile-strongAlgorithms-MisspelledPropertyName.securerandom.strongAlgorithmsWrong "
                             + "in profile RestrictedSecurity.Test-Profile-strongAlgorithms-MisspelledPropertyName \\(or a base profile\\) are not recognized",
                     1));
-        }
 
         return tests.build();
     }
@@ -329,7 +327,6 @@ public class TestProperties {
     }
 
     private static void testStrongAlgorithms() {
-        if (isProviderPresent("OpenJCEPlusFIPS")) {
             String strongAlgorithms = Security.getProperty("securerandom.strongAlgorithms");
             if ((strongAlgorithms != null) && !strongAlgorithms.isEmpty()) {
                 try {
@@ -339,7 +336,6 @@ public class TestProperties {
                     System.out.println("FAILED: " + e.getMessage());
                 }
             }
-        }
     }
 
     public static void main(String[] args) {
