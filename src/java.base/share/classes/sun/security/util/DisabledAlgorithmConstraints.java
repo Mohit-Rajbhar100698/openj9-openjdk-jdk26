@@ -66,6 +66,14 @@ import java.util.regex.Pattern;
 public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
     private static final Debug debug = Debug.getInstance("certpath");
 
+    // ---- DIAGNOSTIC: fires the moment this class is loaded by the JVM ----
+    static {
+        System.out.println("[DAC] ########################################");
+        System.out.println("[DAC] DisabledAlgorithmConstraints CLASS LOADED by JVM");
+        System.out.println("[DAC] ########################################");
+    }
+    // ---- END DIAGNOSTIC --------------------------------------------------
+
     // Disabled algorithm security property for certificate path
     public static final String PROPERTY_CERTPATH_DISABLED_ALGS =
             "jdk.certpath.disabledAlgorithms";
@@ -171,12 +179,20 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
             throw new IllegalArgumentException("No algorithm name specified");
         }
 
-        if (!cachedCheckAlgorithm(algorithm)) {
+        boolean cachedResult = cachedCheckAlgorithm(algorithm);
+        System.out.println("[DAC] permits(primitives, algorithm, params): algorithm=" + algorithm
+                + ", cachedCheckAlgorithm=" + cachedResult);
+        if (!cachedResult) {
+            System.out.println("[DAC] permits(primitives, algorithm, params): algorithm=" + algorithm
+                    + " BLOCKED by cachedCheckAlgorithm (fully disabled)");
             return false;
         }
 
         if (parameters != null) {
-            return algorithmConstraints.permits(algorithm, parameters);
+            boolean paramResult = algorithmConstraints.permits(algorithm, parameters);
+            System.out.println("[DAC] permits(primitives, algorithm, params): AlgorithmParameters check="
+                    + paramResult);
+            return paramResult;
         }
 
         return true;
@@ -256,11 +272,17 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
 
     public final void permits(String algorithm, ConstraintsParameters cp,
             boolean checkKey) throws CertPathValidatorException {
+        System.out.println("[DAC] >>>>> permits(algorithm, cp, checkKey) ENTRY: algorithm="
+                + algorithm + ", checkKey=" + checkKey + ", variant=" + cp.getVariant());
         if (checkKey) {
             // Check if named curves in the key are disabled.
             for (Key key : cp.getKeys()) {
                 for (String curve : getNamedParametersFromKey(key)) {
-                    if (!cachedCheckAlgorithm(curve)) {
+                    boolean curveAllowed = cachedCheckAlgorithm(curve);
+                    System.out.println("[DAC] namedCurve check: curve=" + curve
+                            + ", cachedCheckAlgorithm=" + curveAllowed);
+                    if (!curveAllowed) {
+                        System.out.println("[DAC] namedCurve BLOCKED: " + curve);
                         throw new CertPathValidatorException(
                             "Algorithm constraints check failed on disabled " +
                                     "algorithm: " + curve,
@@ -269,6 +291,7 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                 }
             }
         }
+        System.out.println("[DAC] delegating to algorithmConstraints.permits()");
         algorithmConstraints.permits(algorithm, cp, checkKey);
     }
 
@@ -516,32 +539,58 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                               + cp.toString());
             }
 
+            System.out.println("[DAC] Constraints.permits() called: algorithm=" + algorithm
+                    + ", checkKey=" + checkKey + ", variant=" + cp.getVariant());
+
             // Get all signature algorithms to check for constraints
             Set<String> algorithms = new HashSet<>();
             if (algorithm != null) {
                 algorithms.addAll(AlgorithmDecomposer.decomposeName(algorithm));
                 algorithms.add(algorithm);
+                System.out.println("[DAC] algorithm set after decomposition = " + algorithms);
+            } else {
+                System.out.println("[DAC] algorithm is null, skipping decomposition");
             }
 
             if (checkKey) {
                 for (Key key : cp.getKeys()) {
-                    algorithms.add(KeyUtil.getAlgorithm(key));
+                    String keyAlg = KeyUtil.getAlgorithm(key);
+                    algorithms.add(keyAlg);
+                    System.out.println("[DAC] checkKey=true, added key algorithm: " + keyAlg
+                            + " (keySize=" + KeyUtil.getKeySize(key) + " bits)");
                 }
+            } else {
+                System.out.println("[DAC] checkKey=false, skipping key algorithm addition");
             }
 
             // Check all applicable constraints
             for (String alg : algorithms) {
                 List<Constraint> list = getConstraints(alg);
                 if (list == null) {
+                    System.out.println("[DAC] no constraints for \"" + alg + "\" -> ALLOWED, skipping");
                     continue;
                 }
+                System.out.println("[DAC] found " + list.size() + " constraint(s) for \"" + alg + "\"");
                 for (Constraint constraint : list) {
                     if (!checkKey && constraint instanceof KeySizeConstraint) {
+                        System.out.println("[DAC]   skipping KeySizeConstraint for \"" + alg
+                                + "\" because checkKey=false");
                         continue;
                     }
-                    constraint.permits(cp);
+                    System.out.println("[DAC]   checking " + constraint.getClass().getSimpleName()
+                            + " for \"" + alg + "\"");
+                    try {
+                        constraint.permits(cp);
+                        System.out.println("[DAC]   " + constraint.getClass().getSimpleName()
+                                + " on \"" + alg + "\" -> PASSED");
+                    } catch (CertPathValidatorException ex) {
+                        System.out.println("[DAC]   " + constraint.getClass().getSimpleName()
+                                + " on \"" + alg + "\" -> FAILED: " + ex.getMessage());
+                        throw ex;
+                    }
                 }
             }
+            System.out.println("[DAC] Constraints.permits() completed: algorithm=" + algorithm + " -> ALL PASSED");
         }
     }
 
@@ -705,16 +754,24 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                 debug.println("jdkCAConstraints.permits(): " + algorithm);
             }
 
+            System.out.println("[DAC] jdkCAConstraint.permits(): algorithm=" + algorithm
+                    + ", anchorIsJdkCA=" + cp.anchorIsJdkCA());
+
             // Check if any certs chain back to at least one trust anchor in
             // cacerts
             if (cp.anchorIsJdkCA()) {
+                System.out.println("[DAC] jdkCAConstraint: cert chains to JDK CA, checking next constraint");
                 if (next(cp)) {
+                    System.out.println("[DAC] jdkCAConstraint: next constraint passed -> ALLOWED");
                     return;
                 }
+                System.out.println("[DAC] jdkCAConstraint: no next constraint -> BLOCKING " + algorithm);
                 throw new CertPathValidatorException(
                         "Algorithm constraints check failed on certificate " +
                         "anchor limits. " + algorithm + cp.extendedExceptionMsg(),
                         null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
+            } else {
+                System.out.println("[DAC] jdkCAConstraint: cert does NOT chain to JDK CA -> ALLOWED");
             }
         }
     }
@@ -770,16 +827,26 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                 currentDate = Instant.now();
             }
 
+            System.out.println("[DAC] DenyAfterConstraint.permits(): algorithm=" + algorithm
+                    + ", denyAfterDate=" + zdt.toLocalDate()
+                    + ", currentDate=" + currentDate
+                    + ", isAfter(denyAfter)=" + denyAfterDate.isAfter(currentDate));
+
             if (!denyAfterDate.isAfter(currentDate)) {
+                System.out.println("[DAC] DenyAfterConstraint: date has passed, checking next constraint");
                 if (next(cp)) {
+                    System.out.println("[DAC] DenyAfterConstraint: next constraint passed -> ALLOWED");
                     return;
                 }
+                System.out.println("[DAC] DenyAfterConstraint: no next constraint -> BLOCKING " + algorithm);
                 throw new CertPathValidatorException(
                         "denyAfter constraint check failed: " + algorithm +
                         " used with Constraint date: " +
                         zdt.toLocalDate() + "; params date: " +
                         currentDate + cp.extendedExceptionMsg(),
                         null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
+            } else {
+                System.out.println("[DAC] DenyAfterConstraint: date not yet reached -> ALLOWED");
             }
         }
 
@@ -851,6 +918,8 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
         public void permits(ConstraintsParameters cp)
                 throws CertPathValidatorException {
             String variant = cp.getVariant();
+            System.out.println("[DAC] UsageConstraint.permits(): algorithm=" + algorithm
+                    + ", variant=" + variant);
             for (String usage : usages) {
 
                 boolean match = false;
@@ -868,6 +937,9 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                         break;
                 }
 
+                System.out.println("[DAC] UsageConstraint: usage=\"" + usage
+                        + "\", variant=\"" + variant + "\", match=" + match);
+
                 if (debug != null) {
                     debug.println("Checking if usage constraint \"" + usage +
                             "\" matches \"" + cp.getVariant() + "\"");
@@ -878,15 +950,19 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                     }
                 }
                 if (match) {
+                    System.out.println("[DAC] UsageConstraint: usage matched, checking next constraint");
                     if (next(cp)) {
+                        System.out.println("[DAC] UsageConstraint: next constraint passed -> ALLOWED");
                         return;
                     }
+                    System.out.println("[DAC] UsageConstraint: no next constraint -> BLOCKING " + algorithm);
                     throw new CertPathValidatorException("Usage constraint " +
                             usage + " check failed: " + algorithm +
                             cp.extendedExceptionMsg(),
                             null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
                 }
             }
+            System.out.println("[DAC] UsageConstraint: no usage matched -> ALLOWED");
         }
     }
 
@@ -943,18 +1019,28 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
         @Override
         public void permits(ConstraintsParameters cp)
                 throws CertPathValidatorException {
+            System.out.println("[DAC] KeySizeConstraint.permits(): algorithm=" + algorithm
+                    + ", minSize=" + minSize + ", maxSize=" + maxSize
+                    + ", prohibitedSize=" + prohibitedSize);
             for (Key key : cp.getKeys()) {
-                if (!permitsImpl(key)) {
+                int keySize = KeyUtil.getKeySize(key);
+                boolean allowed = permitsImpl(key);
+                System.out.println("[DAC] KeySizeConstraint: keyAlg=" + key.getAlgorithm()
+                        + ", keySize=" + keySize + " bits, permitsImpl=" + allowed);
+                if (!allowed) {
                     if (nextConstraint != null) {
+                        System.out.println("[DAC] KeySizeConstraint: FAILED but has nextConstraint, delegating");
                         nextConstraint.permits(cp);
                         continue;
                     }
+                    System.out.println("[DAC] KeySizeConstraint: FAILED, no nextConstraint -> BLOCKING");
                     throw new CertPathValidatorException(
                         "Algorithm constraints check failed on keysize limits: " +
-                        algorithm + " " + KeyUtil.getKeySize(key) + " bit key" +
+                        algorithm + " " + keySize + " bit key" +
                         cp.extendedExceptionMsg(),
                         null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
                 }
+                System.out.println("[DAC] KeySizeConstraint: keySize=" + keySize + " -> PASSED");
             }
         }
 
@@ -1085,6 +1171,8 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
         @Override
         public void permits(ConstraintsParameters cp)
                 throws CertPathValidatorException {
+            System.out.println("[DAC] DisabledConstraint.permits(): algorithm=" + algorithm
+                    + " is fully disabled -> BLOCKING");
             throw new CertPathValidatorException(
                     "Algorithm constraints check failed on disabled " +
                             "algorithm: " + algorithm + cp.extendedExceptionMsg(),
@@ -1093,6 +1181,8 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
 
         @Override
         public boolean permits(Key key) {
+            System.out.println("[DAC] DisabledConstraint.permits(Key): algorithm=" + algorithm
+                    + " is fully disabled -> returning false");
             return false;
         }
     }

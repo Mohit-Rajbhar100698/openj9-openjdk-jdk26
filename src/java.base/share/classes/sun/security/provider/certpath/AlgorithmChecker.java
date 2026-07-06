@@ -80,7 +80,7 @@ public final class AlgorithmChecker extends PKIXCertPathChecker {
      * @param anchor the trust anchor selected to validate the target
      *     certificate
      * @param variant the Validator variant of the operation. A null value
-     *                passed will set it to Validator.GENERIC.
+     *                passed will set it to Validator.GENERIC .
      */
     public AlgorithmChecker(TrustAnchor anchor, String variant) {
         this(anchor, null, null, variant);
@@ -200,6 +200,15 @@ public final class AlgorithmChecker extends PKIXCertPathChecker {
         PublicKey currPubKey = cert.getPublicKey();
         String currSigAlg = x509Cert.getSigAlgName();
 
+        System.out.println("\n========== AlgorithmChecker==========");
+        System.out.println("Subject      : " + x509Cert.getSubjectX500Principal());
+        System.out.println("Issuer       : " + x509Cert.getIssuerX500Principal());
+        System.out.println("SigAlg       : " + currSigAlg);
+        System.out.println("PubKey Alg   : " + currPubKey.getAlgorithm());
+        System.out.println("Constraints  : " + constraints.getClass().getName());
+        System.out.println("Variant      : " + variant);
+        System.out.println("PrevPubKey   : " + (prevPubKey == null ? "null" : prevPubKey.getAlgorithm()));
+
         if (constraints instanceof DisabledAlgorithmConstraints dac) {
             if (prevPubKey != null && prevPubKey == trustedPubKey) {
                 // check constraints of trusted public key (make sure
@@ -214,7 +223,16 @@ public final class AlgorithmChecker extends PKIXCertPathChecker {
             CertPathConstraintsParameters cp =
                 new CertPathConstraintsParameters(x509Cert, variant,
                     anchor, date);
-            dac.permits(currSigAlg, currSigAlgParams, cp, true);
+            System.out.println("Checking algorithm Mohit: " + currSigAlg);
+
+            try {
+                dac.permits(currSigAlg, currSigAlgParams, cp, true);
+                System.out.println("Algorithm ALLOWED: " + currSigAlg);
+            } catch (CertPathValidatorException e) {
+                System.out.println("Algorithm REJECTED: " + currSigAlg);
+                e.printStackTrace(System.out);
+                throw e;
+            }
         } else {
             if (prevPubKey != null) {
                 if (!constraints.permits(SIGNATURE_PRIMITIVE_SET,
@@ -302,6 +320,7 @@ public final class AlgorithmChecker extends PKIXCertPathChecker {
                     DSAPublicKeySpec ks = new DSAPublicKeySpec(y, params.getP(),
                             params.getQ(), params.getG());
                     currPubKey = kf.generatePublic(ks);
+                    System.out.println("Inherited DSA parameters successfully.");
                 } catch (GeneralSecurityException e) {
                     throw new CertPathValidatorException("Unable to generate " +
                             "key with inherited parameters: " +
@@ -310,6 +329,8 @@ public final class AlgorithmChecker extends PKIXCertPathChecker {
             }
         }
 
+        System.out.println("Updating prevPubKey = " + currPubKey.getAlgorithm());
+        System.out.println("====================================");
         // reset the previous public key
         prevPubKey = currPubKey;
     }

@@ -90,15 +90,36 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
             AlgorithmConstraints constraints,
             List<SNIServerName> requestedServerNames, String idAlgorithm) {
 
+        System.out.println("\n================ checkAlias ================");
+        System.out.println("Alias        : " + alias);
+        System.out.println("CheckType    : " + checkType);
+        System.out.println("Validator    : " + checkType.getValidator());
+        System.out.println("Constraints  : "
+                + (constraints == null ? "null"
+                        : constraints.getClass().getName()));
+        System.out.println("Chain Length : "
+                + (chain == null ? 0 : chain.length));                
+
         // --- Mandatory checks ---
 
         if ((chain == null) || (chain.length == 0)) {
+            System.out.println("Reject: Empty certificate chain");
             return null;
         }
 
         for (Certificate cert : chain) {
+
+            X509Certificate x = (X509Certificate) cert;
+
+            System.out.println("--------------------------------");
+            System.out.println("Subject : " + x.getSubjectX500Principal());
+            System.out.println("Issuer  : " + x.getIssuerX500Principal());
+            System.out.println("SigAlg  : " + x.getSigAlgName());
+            System.out.println("PubKey  : " + x.getPublicKey().getAlgorithm());
+
             if (!(cert instanceof X509Certificate)) {
                 // Not an X509Certificate, ignore this alias
+                System.out.println("Reject: Non-X509 certificate");
                 return null;
             }
         }
@@ -109,6 +130,10 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
 
         for (KeyType keyType : keyTypes) {
             if (keyType.matches(chain)) {
+                System.out.println("Matched KeyType : " + keyType.keyAlgorithm
+                        + (keyType.sigKeyAlgorithm == null
+                                ? ""
+                                : ("_" + keyType.sigKeyAlgorithm)));
                 keyIndex = j;
                 break;
             }
@@ -120,6 +145,7 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
                 SSLLogger.fine("Ignore alias " + alias
                         + ": key algorithm does not match");
             }
+            System.out.println("Reject: Key algorithm mismatch");
             return null;
         }
 
@@ -129,6 +155,8 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
             for (Certificate cert : chain) {
                 X509Certificate xcert = (X509Certificate) cert;
                 if (issuerSet.contains(xcert.getIssuerX500Principal())) {
+                    System.out.println("Matched Issuer : "
+                            + xcert.getIssuerX500Principal());
                     found = true;
                     break;
                 }
@@ -139,12 +167,13 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
                             "Ignore alias " + alias
                                     + ": issuers do not match");
                 }
+                System.out.println("Reject: Issuer mismatch");
                 return null;
             }
         }
 
         // --- Optional checks, depending on "checksDisabled" toggle ---
-
+        System.out.println("Checking Algorithm Constraints...");
         // Check the algorithm constraints
         if (constraints != null &&
                 !conformsToAlgorithmConstraints(constraints, chain,
@@ -155,14 +184,23 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
                         ": certificate chain does not conform to " +
                         "algorithm constraints");
             }
+            System.out.println("Reject: Algorithm Constraints");
             return null;
         }
 
+        System.out.println("Algorithm Constraints PASSED");
+
+        System.out.println("Running certificateCheck()");
         // Endpoint certificate check
         CheckResult checkResult = certificateCheck(checkType,
                 (X509Certificate) chain[0],
                 verificationDate == null ? new Date() : verificationDate,
                 requestedServerNames, idAlgorithm);
+        System.out.println("certificateCheck = " + checkResult);
+
+        System.out.println("Alias ACCEPTED : " + alias);
+        System.out.println("CheckResult    : " + checkResult);
+        System.out.println("======================================");
 
         return new EntryStatus(
                 keyStoreIndex, keyIndex, alias, chain, checkResult);
@@ -211,7 +249,8 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
             String variant) {
 
         if (checksDisabled) {
-            return true;
+            System.out.println("AlgorithmChecker PASSED");
+        return true;
         }
 
         AlgorithmChecker checker = new AlgorithmChecker(constraints, variant);
@@ -231,6 +270,10 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
         // It is a forward checker, so we need to check from trust to target.
         for (int i = chain.length - 1; i >= 0; i--) {
             Certificate cert = chain[i];
+            X509Certificate x = (X509Certificate) cert;
+            System.out.println("\nAlgorithmChecker:");
+            System.out.println("Subject : " + x.getSubjectX500Principal());
+            System.out.println("SigAlg  : " + x.getSigAlgName());
             try {
                 // We don't care about the unresolved critical extensions.
                 checker.check(cert, Collections.emptySet());
@@ -238,7 +281,16 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
                 if (SSLLogger.isOn() && SSLLogger.isOn("keymanager")) {
                     SSLLogger.fine("Certificate does not conform to " +
                             "algorithm constraints", cert, cpve);
+                System.out.println("AlgorithmChecker rejected certificate");
+                System.out.println("Reason : " + cpve.getMessage());
+                System.out.println("Reason Code : " + cpve.getReason());
+                System.out.println("Class Name : " + cpve.getClass().getName());
+                System.out.println("Certificate : " + cpve.getCertPath());
+                cpve.printStackTrace(System.out);
+                            
                 }
+                System.out.println("AlgorithmChecker rejected certificate");
+                cpve.printStackTrace(System.out);
 
                 return false;
             }
@@ -251,8 +303,13 @@ abstract class X509KeyManagerCertChecking extends X509ExtendedKeyManager {
     private CheckResult certificateCheck(
             CheckType checkType, X509Certificate cert, Date date,
             List<SNIServerName> serverNames, String idAlgorithm) {
-        return checksDisabled ? CheckResult.OK
+        CheckResult result = checksDisabled
+                ? CheckResult.OK
                 : checkType.check(cert, date, serverNames, idAlgorithm);
+
+        System.out.println("certificateCheck() returned : " + result);
+
+        return result;
     }
 
     // enum for the result of the extension check
