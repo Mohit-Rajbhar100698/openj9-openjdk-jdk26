@@ -298,17 +298,27 @@ enum SignatureScheme {
         // Note: Please be careful if removing this block!
         if ("EC".equals(keyAlgorithm)) {
             mediator = JsseJce.isEcAvailable();
+            System.err.println("[SignatureScheme] <init> " + name +
+                    " (" + algorithm + "): EC available=" + mediator);
         }
 
         // Check the specific algorithm and parameters.
         if (mediator) {
             if (signAlgParams != null) {
                 mediator = signAlgParams.isAvailable;
+                System.err.println("[SignatureScheme] <init> " + name +
+                        " (" + algorithm + "): uses SigAlgParamSpec, isAvailable=" + mediator);
             } else {
                 try {
-                    Signature.getInstance(algorithm);
+                    Provider p = Signature.getInstance(algorithm).getProvider();
+                    System.err.println("[SignatureScheme] <init> " + name +
+                            " (" + algorithm + "): Signature.getInstance OK," +
+                            " provider=" + p.getName() + " " + p.getVersionStr());
                 } catch (Exception e) {
                     mediator = false;
+                    System.err.println("[SignatureScheme] <init> " + name +
+                            " (" + algorithm + "): Signature.getInstance FAILED" +
+                            " -> isAvailable=false, exception=" + e);
                     if (SSLLogger.isOn() && SSLLogger.isOn("ssl,handshake")) {
                         SSLLogger.warning(
                             "Signature algorithm, " + algorithm +
@@ -322,10 +332,14 @@ enum SignatureScheme {
             // There are some problems to use SHA224 on Windows.
             if (Security.getProvider("SunMSCAPI") != null) {
                 mediator = false;
+                System.err.println("[SignatureScheme] <init> " + name +
+                        " (" + algorithm + "): disabled due to SunMSCAPI SHA224 issue");
             }
         }
 
         this.isAvailable = mediator;
+        System.err.println("[SignatureScheme] <init> " + name +
+                " (" + algorithm + "): FINAL isAvailable=" + mediator);
     }
 
     static SignatureScheme valueOf(int id) {
@@ -375,14 +389,29 @@ enum SignatureScheme {
 
     private boolean isPermitted(
             SSLAlgorithmConstraints constraints, Set<SSLScope> scopes) {
-        return constraints.permits(this.name, scopes)
-                && constraints.permits(this.keyAlgorithm, scopes)
-                && constraints.permits(this.algorithm, scopes)
-                && constraints.permits(SIGNATURE_PRIMITIVE_SET, this.name, null)
-                && constraints.permits(SIGNATURE_PRIMITIVE_SET, this.keyAlgorithm, null)
-                && constraints.permits(SIGNATURE_PRIMITIVE_SET, this.algorithm,
-                (signAlgParams != null ? signAlgParams.parameters : null))
-                && (namedGroup == null || namedGroup.isPermitted(constraints));
+        boolean r1 = constraints.permits(this.name, scopes);
+        boolean r2 = r1 && constraints.permits(this.keyAlgorithm, scopes);
+        boolean r3 = r2 && constraints.permits(this.algorithm, scopes);
+        boolean r4 = r3 && constraints.permits(SIGNATURE_PRIMITIVE_SET, this.name, null);
+        boolean r5 = r4 && constraints.permits(SIGNATURE_PRIMITIVE_SET, this.keyAlgorithm, null);
+        boolean r6 = r5 && constraints.permits(SIGNATURE_PRIMITIVE_SET, this.algorithm,
+                (signAlgParams != null ? signAlgParams.parameters : null));
+        boolean r7 = r6 && (namedGroup == null || namedGroup.isPermitted(constraints));
+        boolean result = r7;
+
+        // Only log when something is blocked so output stays manageable
+        if (!result) {
+            System.err.println("[SignatureScheme] isPermitted(" + this.name +
+                    ") scopes=" + scopes + " -> FALSE at step:" +
+                    (!r1 ? " permits(name=" + this.name + ",scopes)" :
+                     !r2 ? " permits(keyAlg=" + this.keyAlgorithm + ",scopes)" :
+                     !r3 ? " permits(algorithm=" + this.algorithm + ",scopes)" :
+                     !r4 ? " permits(SIGNATURE,name=" + this.name + ",null)" :
+                     !r5 ? " permits(SIGNATURE,keyAlg=" + this.keyAlgorithm + ",null)" :
+                     !r6 ? " permits(SIGNATURE,algorithm=" + this.algorithm + ",params)" :
+                            " namedGroup=" + namedGroup));
+        }
+        return result;
     }
 
     // Helper method to update all locally supported signature schemes for
@@ -457,8 +486,11 @@ enum SignatureScheme {
             }
         }
 
+        System.err.println("[SignatureScheme] getSupportedAlgorithms(local)" +
+                " scopes=" + scopes + " protocols=" + activeProtocols);
         for (SignatureScheme ss: schemesToCheck) {
             if (!ss.isAvailable) {
+                System.err.println("[SignatureScheme]   SKIP (not available): " + ss.name);
                 if (SSLLogger.isOn() &&
                         SSLLogger.isOn("ssl,handshake,verbose")) {
                     SSLLogger.finest(
@@ -477,19 +509,28 @@ enum SignatureScheme {
 
             if (isMatch) {
                 if (ss.isPermitted(constraints, scopes)) {
+                    System.err.println("[SignatureScheme]   ADD (available+permitted): " + ss.name);
                     supported.add(ss);
-                } else if (SSLLogger.isOn() &&
+                } else {
+                    System.err.println("[SignatureScheme]   SKIP (not permitted by constraints): " + ss.name);
+                    if (SSLLogger.isOn() &&
+                            SSLLogger.isOn("ssl,handshake,verbose")) {
+                        SSLLogger.finest(
+                            "Ignore disabled signature scheme: " + ss.name);
+                    }
+                }
+            } else {
+                System.err.println("[SignatureScheme]   SKIP (protocol mismatch): " + ss.name +
+                        " supportedProtocols=" + (scopes != null && scopes.equals(HANDSHAKE_SCOPE)
+                        ? ss.handshakeSupportedProtocols : ss.supportedProtocols));
+                if (SSLLogger.isOn() &&
                         SSLLogger.isOn("ssl,handshake,verbose")) {
                     SSLLogger.finest(
-                        "Ignore disabled signature scheme: " + ss.name);
+                        "Ignore inactive signature scheme: " + ss.name);
                 }
-            } else if (SSLLogger.isOn() &&
-                    SSLLogger.isOn("ssl,handshake,verbose")) {
-                SSLLogger.finest(
-                    "Ignore inactive signature scheme: " + ss.name);
             }
         }
-
+        System.err.println("[SignatureScheme] getSupportedAlgorithms(local) result: " + supported);
         return supported;
     }
 
@@ -499,10 +540,15 @@ enum SignatureScheme {
             ProtocolVersion protocolVersion,
             int[] algorithmIds,
             Set<SSLScope> scopes) {
+        System.err.println("[SignatureScheme] getSupportedAlgorithms(peer)" +
+                " scopes=" + scopes + " protocol=" + protocolVersion +
+                " algorithmIds.length=" + algorithmIds.length);
         List<SignatureScheme> supported = new LinkedList<>();
         for (int ssid : algorithmIds) {
             SignatureScheme ss = SignatureScheme.valueOf(ssid);
             if (ss == null) {
+                System.err.println("[SignatureScheme]   UNKNOWN peer scheme id=0x" +
+                        Integer.toHexString(ssid) + " (" + SignatureScheme.nameOf(ssid) + ")");
                 if (SSLLogger.isOn() && SSLLogger.isOn("ssl,handshake")) {
                     SSLLogger.warning(
                             "Unsupported signature scheme: " +
@@ -511,15 +557,20 @@ enum SignatureScheme {
             } else if ((config.signatureSchemes == SupportedSigSchemes.DEFAULT
                     || Utilities.contains(config.signatureSchemes, ss.name))
                     && ss.isAllowed(constraints, protocolVersion, scopes)) {
+                System.err.println("[SignatureScheme]   ADD peer scheme: " + ss.name +
+                        " isAvailable=" + ss.isAvailable);
                 supported.add(ss);
             } else {
+                System.err.println("[SignatureScheme]   SKIP peer scheme: " + ss.name +
+                        " isAvailable=" + ss.isAvailable +
+                        " isAllowed=" + ss.isAllowed(constraints, protocolVersion, scopes));
                 if (SSLLogger.isOn() && SSLLogger.isOn("ssl,handshake")) {
                     SSLLogger.warning(
                             "Unsupported signature scheme: " + ss.name);
                 }
             }
         }
-
+        System.err.println("[SignatureScheme] getSupportedAlgorithms(peer) result: " + supported);
         return supported;
     }
 
@@ -701,13 +752,19 @@ enum SignatureScheme {
     // Default signature schemes for SSLConfiguration.
     static final class SupportedSigSchemes {
 
-        static final String[] DEFAULT = Arrays.stream(
-                        SignatureScheme.values())
-                .filter(ss -> ss.isAvailable
-                        && ss.isPermitted(
-                        SSLAlgorithmConstraints.DEFAULT, null))
-                .filter(brainpoolFilter())
-                .map(ss -> ss.name).toArray(String[]::new);
+        static final String[] DEFAULT = computeDefault();
+
+        private static String[] computeDefault() {
+            String[] result = Arrays.stream(SignatureScheme.values())
+                    .filter(ss -> ss.isAvailable
+                            && ss.isPermitted(
+                            SSLAlgorithmConstraints.DEFAULT, null))
+                    .filter(brainpoolFilter())
+                    .map(ss -> ss.name).toArray(String[]::new);
+            System.err.println("[SignatureScheme] SupportedSigSchemes.DEFAULT computed: " +
+                    java.util.Arrays.toString(result));
+            return result;
+        }
 
         private static java.util.function.Predicate<SignatureScheme> brainpoolFilter() {
             // Check if ecdsa_brainpoolP512r1tls13_sha512 was explicitly
